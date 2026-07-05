@@ -1,0 +1,264 @@
+# ================================================================
+#  LiveMap Berita Spasial - Docker Compose
+# ================================================================
+#  Pilih profil database sesuai kebutuhan:
+#    - SQLite (default):    docker compose up -d
+#    - PostgreSQL:           docker compose --profile postgres up -d
+#    - MySQL:                docker compose --profile mysql up -d
+# ================================================================
+
+version: "3.8"
+
+# ---- Common Network ----
+networks:
+  livemap-network:
+    driver: bridge
+
+# ---- Common Volumes ----
+volumes:
+  livemap-data:
+    driver: local
+  n8n-data:
+    driver: local
+  postgres-data:
+    driver: local
+  mysql-data:
+    driver: local
+
+# ================================================================
+#  DEFAULT: SQLite Database
+# ================================================================
+
+# ---- LiveMap Application (SQLite) ----
+livemap-app:
+  build:
+    context: .
+    dockerfile: Dockerfile
+  container_name: livemap-app
+  restart: unless-stopped
+  ports:
+    - "${APP_PORT:-3000}:3000"
+  environment:
+    - DATABASE_URL=${DATABASE_URL:-file:/app/data/livemap.db}
+    - DB_PROVIDER=${DB_PROVIDER:-sqlite}
+    - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-livemap-secret-key-docker-2024}
+    - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+    - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+    - NODE_ENV=production
+  volumes:
+    - livemap-data:/app/data
+  healthcheck:
+    test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/settings"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 40s
+  networks:
+    - livemap-network
+
+# ---- n8n Workflow Automation ----
+n8n:
+  image: n8nio/n8n:latest
+  container_name: livemap-n8n
+  restart: unless-stopped
+  ports:
+    - "5678:5678"
+  environment:
+    - N8N_HOST=${N8N_HOST:-0.0.0.0}
+    - N8N_PORT=5678
+    - N8N_PROTOCOL=http
+    - WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://localhost:5678}
+    - N8N_BASIC_AUTH_ACTIVE=true
+    - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+    - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-admin123}
+    - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-livemap-n8n-encryption-key-2024}
+    - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Asia/Jakarta}
+    - TZ=${TZ:-Asia/Jakarta}
+    - NODE_FUNCTION_ALLOW_EXTERNAL=*
+  volumes:
+    - n8n-data:/home/node/.n8n
+  depends_on:
+    livemap-app:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "wget", "--spider", "-q", "http://localhost:5678/healthz"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 30s
+  networks:
+    - livemap-network
+
+# ================================================================
+#  OPTION A: PostgreSQL Database
+#  Jalankan: docker compose --profile postgres up -d
+# ================================================================
+
+livemap-app-pg:
+  build:
+    context: .
+    dockerfile: Dockerfile
+  container_name: livemap-app-pg
+  restart: unless-stopped
+  profiles:
+    - postgres
+  ports:
+    - "${APP_PORT:-3000}:3000"
+  environment:
+    - DATABASE_URL=postgresql://${POSTGRES_USER:-livemap}:${POSTGRES_PASSWORD:-livemap123}@postgres-db:5432/${POSTGRES_DB:-livemap}?schema=public
+    - DB_PROVIDER=postgresql
+    - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-livemap-secret-key-docker-2024}
+    - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+    - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+    - NODE_ENV=production
+  depends_on:
+    postgres-db:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/settings"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 60s
+  networks:
+    - livemap-network
+
+n8n-pg:
+  image: n8nio/n8n:latest
+  container_name: livemap-n8n-pg
+  restart: unless-stopped
+  profiles:
+    - postgres
+  ports:
+    - "5678:5678"
+  environment:
+    - N8N_HOST=${N8N_HOST:-0.0.0.0}
+    - N8N_PORT=5678
+    - N8N_PROTOCOL=http
+    - WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://localhost:5678}
+    - N8N_BASIC_AUTH_ACTIVE=true
+    - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+    - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-admin123}
+    - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-livemap-n8n-encryption-key-2024}
+    - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Asia/Jakarta}
+    - TZ=${TZ:-Asia/Jakarta}
+    - NODE_FUNCTION_ALLOW_EXTERNAL=*
+  volumes:
+    - n8n-data:/home/node/.n8n
+  depends_on:
+    livemap-app-pg:
+      condition: service_healthy
+  networks:
+    - livemap-network
+
+postgres-db:
+  image: postgres:16-alpine
+  container_name: livemap-postgres
+  restart: unless-stopped
+  profiles:
+    - postgres
+  ports:
+    - "${POSTGRES_PORT:-5432}:5432"
+  environment:
+    - POSTGRES_USER=${POSTGRES_USER:-livemap}
+    - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-livemap123}
+    - POSTGRES_DB=${POSTGRES_DB:-livemap}
+    - TZ=${TZ:-Asia/Jakarta}
+  volumes:
+    - postgres-data:/var/lib/postgresql/data
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-livemap} -d ${POSTGRES_DB:-livemap}"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 30s
+  networks:
+    - livemap-network
+
+# ================================================================
+#  OPTION B: MySQL Database
+#  Jalankan: docker compose --profile mysql up -d
+# ================================================================
+
+livemap-app-my:
+  build:
+    context: .
+    dockerfile: Dockerfile
+  container_name: livemap-app-my
+  restart: unless-stopped
+  profiles:
+    - mysql
+  ports:
+    - "${APP_PORT:-3000}:3000"
+  environment:
+    - DATABASE_URL=mysql://${MYSQL_USER:-livemap}:${MYSQL_PASSWORD:-livemap123}@mysql-db:3306/${MYSQL_DATABASE:-livemap}
+    - DB_PROVIDER=mysql
+    - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-livemap-secret-key-docker-2024}
+    - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+    - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+    - NODE_ENV=production
+  depends_on:
+    mysql-db:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/settings"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 60s
+  networks:
+    - livemap-network
+
+n8n-my:
+  image: n8nio/n8n:latest
+  container_name: livemap-n8n-my
+  restart: unless-stopped
+  profiles:
+    - mysql
+  ports:
+    - "5678:5678"
+  environment:
+    - N8N_HOST=${N8N_HOST:-0.0.0.0}
+    - N8N_PORT=5678
+    - N8N_PROTOCOL=http
+    - WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://localhost:5678}
+    - N8N_BASIC_AUTH_ACTIVE=true
+    - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+    - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-admin123}
+    - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-livemap-n8n-encryption-key-2024}
+    - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Asia/Jakarta}
+    - TZ=${TZ:-Asia/Jakarta}
+    - NODE_FUNCTION_ALLOW_EXTERNAL=*
+  volumes:
+    - n8n-data:/home/node/.n8n
+  depends_on:
+    livemap-app-my:
+      condition: service_healthy
+  networks:
+    - livemap-network
+
+mysql-db:
+  image: mysql:8.0
+  container_name: livemap-mysql
+  restart: unless-stopped
+  profiles:
+    - mysql
+  ports:
+    - "${MYSQL_PORT:-3306}:3306"
+  environment:
+    - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-rootpassword123}
+    - MYSQL_USER=${MYSQL_USER:-livemap}
+    - MYSQL_PASSWORD=${MYSQL_PASSWORD:-livemap123}
+    - MYSQL_DATABASE=${MYSQL_DATABASE:-livemap}
+    - TZ=${TZ:-Asia/Jakarta}
+  volumes:
+    - mysql-data:/var/lib/mysql
+  command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+  healthcheck:
+    test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "${MYSQL_USER:-livemap}", "-p${MYSQL_PASSWORD:-livemap123}"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 30s
+  networks:
+    - livemap-network
